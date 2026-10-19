@@ -55,8 +55,8 @@ Add it to Claude Code as an MCP server whose command is `/path/to/omni -config /
 
 | Doc | What it is |
 |-----|------------|
-| [docs/MVP_DESIGN.md](docs/MVP_DESIGN.md) | Minimal MVP: scope, architecture, validation plan, go/no-go criteria |
-| [docs/Omni-MCP-System-Design.pdf](docs/Omni-MCP-System-Design.pdf) | Complete v1.0 design: health checks, hybrid search, security, benchmark |
+| [docs/MVP_DESIGN.md](docs/MVP_DESIGN.md) ([PDF](docs/Omni-MCP-MVP-Design.pdf)) | Minimal MVP: scope, architecture, validation plan, go/no-go criteria |
+| [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) ([PDF](docs/Omni-MCP-System-Design.pdf)) | Complete v1.0 design in Go: health checks, hybrid search, security, benchmark |
 
 ## MVP in one paragraph
 
@@ -79,7 +79,7 @@ embeddings, persistence, auth and policy come later.
 
 ## Progress
 
-- [x] Full system design
+- [x] Full system design (Go edition)
 - [x] MVP design
 - [ ] Design review / approval
 - [x] MVP implementation (Go)
