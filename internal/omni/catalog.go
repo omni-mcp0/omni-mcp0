@@ -2,7 +2,7 @@ package omni
 
 import (
 	"fmt"
-	"os"
+	"log/slog"
 )
 
 // Catalog is the in-memory list of all connected servers and their tools.
@@ -19,12 +19,12 @@ func BuildCatalog(cfg *Config) *Catalog {
 	for _, sc := range cfg.Servers {
 		u, err := Connect(sc)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "omni: skipping server %q: %v\n", sc.Name, err)
+			slog.Error("skipping server", "server", sc.Name, "err", err)
 			continue
 		}
 		c.Servers[sc.Name] = u
 		c.Order = append(c.Order, sc.Name)
-		fmt.Fprintf(os.Stderr, "omni: connected %q (%d tools)\n", sc.Name, len(u.Tools))
+		slog.Info("connected upstream", "server", sc.Name, "tools", len(u.Tools))
 	}
 	return c
 }

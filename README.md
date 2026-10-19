@@ -39,6 +39,24 @@ go build -o omni ./cmd/omni
 
 Add it to Claude Code as an MCP server whose command is `/path/to/omni -config /path/to/omni.json`.
 
+## Watch the logs (side server + test script)
+
+Terminal 1 — run Omni as a side server (logs print here, and are saved to `omni.log`):
+
+```bash
+go run ./cmd/omni -config omni.json -listen :8080 -log-file omni.log
+```
+
+Terminal 2 — send test requests; every one shows up in Terminal 1:
+
+```bash
+scripts/test.sh
+```
+
+Log lines: `-> meta-tool call` (request arrived), `search ...` (what ranked first),
+`upstream call` (which real server got it, how many ms), `<- meta-tool done` (finished, `is_error`).
+Add `-debug` for more detail.
+
 ## Code map (read in this order)
 
 | File | What it does |

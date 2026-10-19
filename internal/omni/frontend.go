@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 	"sync"
+	"time"
 )
 
 // Frontend is the MCP server that the AGENT talks to (over stdin/stdout).
@@ -36,43 +39,92 @@ func metaTool(name, desc, schema string) map[string]any {
 
 // Serve reads one JSON-RPC message per line from stdin until EOF.
 func (f *Frontend) Serve() {
+	slog.Info("serving on stdio")
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 	for sc.Scan() {
 		var m rpcMsg
 		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			slog.Warn("bad json from client", "err", err)
 			continue
 		}
 		// Handle each request in its own goroutine so one slow upstream call
 		// does not block the agent's other requests.
-		go f.handle(m)
+		go func() {
+			if resp := f.Handle(m); resp != nil {
+				f.write(*resp)
+			}
+		}()
 	}
+	slog.Info("stdin closed, shutting down")
 }
 
-func (f *Frontend) handle(m rpcMsg) {
+// ServeHTTP lets Omni run as a side server: POST one JSON-RPC message to
+// /mcp and get the JSON-RPC reply back. Handy for testing with curl or a
+// test script while watching the logs in another terminal.
+func (f *Frontend) ServeHTTP(addr string) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+		var m rpcMsg
+		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := f.Handle(m)
+		if resp == nil { // notification: no reply body
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+	slog.Info("serving on http", "addr", addr, "endpoint", "POST /mcp")
+	return http.ListenAndServe(addr, mux)
+}
+
+// Handle processes ONE JSON-RPC message and returns the reply
+// (nil for notifications). Used by both stdio and HTTP.
+func (f *Frontend) Handle(m rpcMsg) (resp *rpcMsg) {
+	// A bug while handling one request must never take the whole server down.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic while handling request", "method", m.Method, "panic", r)
+			resp = fail(m.ID, -32603, fmt.Sprintf("internal error: %v", r))
+		}
+	}()
 	if len(m.ID) == 0 {
-		return // notification (e.g. notifications/initialized): nothing to answer
+		slog.Debug("notification", "method", m.Method)
+		return nil // e.g. notifications/initialized: nothing to answer
 	}
 	switch m.Method {
 	case "initialize":
-		f.reply(m.ID, map[string]any{
+		slog.Info("client connected (initialize)")
+		return ok(m.ID, map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "omni-mcp", "version": "0.1.0"},
 		})
 	case "ping":
-		f.reply(m.ID, map[string]any{})
+		return ok(m.ID, map[string]any{})
 	case "tools/list":
-		f.reply(m.ID, map[string]any{"tools": metaTools})
+		slog.Info("tools/list", "returned", len(metaTools))
+		return ok(m.ID, map[string]any{"tools": metaTools})
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
 		}
 		_ = json.Unmarshal(m.Params, &p)
-		f.reply(m.ID, f.callMetaTool(p.Name, p.Arguments))
+
+		start := time.Now()
+		slog.Info("-> meta-tool call", "tool", p.Name, "args", truncate(string(p.Arguments), 300))
+		res := f.callMetaTool(p.Name, p.Arguments)
+		isErr := resultIsError(res)
+		slog.Info("<- meta-tool done", "tool", p.Name, "is_error", isErr, "ms", time.Since(start).Milliseconds())
+		return ok(m.ID, res)
 	default:
-		f.replyErr(m.ID, -32601, "method not found: "+m.Method)
+		slog.Warn("unknown method", "method", m.Method)
+		return fail(m.ID, -32601, "method not found: "+m.Method)
 	}
 }
 
@@ -95,10 +147,13 @@ func (f *Frontend) callMetaTool(name string, raw json.RawMessage) any {
 
 	switch name {
 	case "discover_server":
-		return jsonResult(f.cat.SearchServers(a.Query, orDefault(a.Limit, 5)))
+		hits := f.cat.SearchServers(a.Query, orDefault(a.Limit, 5))
+		slog.Info("   search servers", "query", a.Query, "hits", len(hits), "top", topOf(hits))
+		return jsonResult(hits)
 
 	case "discover_tools":
 		hits := f.cat.SearchTools(a.Server, a.Query, orDefault(a.Limit, 10))
+		slog.Info("   search tools", "server", a.Server, "query", a.Query, "hits", len(hits), "top", topOf(hits))
 		if len(hits) == 0 {
 			return errResult("no tools matched. Try different words, or call discover_server first.")
 		}
@@ -119,7 +174,9 @@ func (f *Frontend) callMetaTool(name string, raw json.RawMessage) any {
 		if err := checkRequired(t.InputSchema, a.Arguments); err != nil {
 			return errResult(err.Error() + ". Call get_tool_schema to see the expected arguments.")
 		}
+		start := time.Now()
 		res, err := u.CallTool(t.Name, a.Arguments)
+		slog.Info("   upstream call", "server", a.Server, "tool", t.Name, "ok", err == nil, "ms", time.Since(start).Milliseconds())
 		if err != nil {
 			return errResult(fmt.Sprintf("server %q failed: %v", a.Server, err))
 		}
@@ -166,13 +223,21 @@ func errResult(msg string) any {
 	return map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": msg}}}
 }
 
-func (f *Frontend) reply(id json.RawMessage, result any) {
+func ok(id json.RawMessage, result any) *rpcMsg {
 	b, _ := json.Marshal(result)
-	f.write(rpcMsg{JSONRPC: "2.0", ID: id, Result: b})
+	return &rpcMsg{JSONRPC: "2.0", ID: id, Result: b}
 }
 
-func (f *Frontend) replyErr(id json.RawMessage, code int, msg string) {
-	f.write(rpcMsg{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: msg}})
+func fail(id json.RawMessage, code int, msg string) *rpcMsg {
+	return &rpcMsg{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: msg}}
+}
+
+// truncate keeps log lines short.
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
 }
 
 func (f *Frontend) write(m rpcMsg) {
@@ -180,4 +245,29 @@ func (f *Frontend) write(m rpcMsg) {
 	f.outMu.Lock()
 	defer f.outMu.Unlock()
 	os.Stdout.Write(append(b, '\n'))
+}
+
+// topOf names the best search hit, for the log.
+func topOf(hits []Hit) string {
+	if len(hits) == 0 {
+		return "-"
+	}
+	if hits[0].Tool != "" {
+		return hits[0].Server + "/" + hits[0].Tool
+	}
+	return hits[0].Server
+}
+
+// resultIsError reports whether a tool result has isError=true. The result may be
+// our own map or the upstream's raw JSON, so we look at it as JSON either way.
+func resultIsError(res any) bool {
+	b, err := json.Marshal(res)
+	if err != nil {
+		return false
+	}
+	var r struct {
+		IsError bool `json:"isError"`
+	}
+	_ = json.Unmarshal(b, &r)
+	return r.IsError
 }
