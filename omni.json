@@ -1,0 +1,12 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "description": "Read and write local files",
+      "tags": ["files"],
+      "timeout_ms": 15000
+    }
+  ]
+}

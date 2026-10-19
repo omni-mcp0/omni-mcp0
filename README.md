@@ -4,7 +4,7 @@ One MCP server that sits between an agent and many upstream MCP servers. The age
 only **four meta-tools**, so it can find and call any of thousands of tools without loading
 their definitions into context.
 
-> **Status: design phase.** No code yet. The MVP design is complete and awaiting review.
+> **Status: MVP v0.1 code written (Go, standard library only).** Design docs are in `docs/`.
 
 ## The problem
 
@@ -29,6 +29,28 @@ Agent ──► Omni MCP ──► github MCP
 
 Agent context cost stays fixed (~1–2k tokens) no matter how many tools exist behind Omni.
 
+## Quick start
+
+```bash
+go build -o omni ./cmd/omni
+# edit omni.json to list your upstream servers, then:
+./omni -config omni.json
+```
+
+Add it to Claude Code as an MCP server whose command is `/path/to/omni -config /path/to/omni.json`.
+
+## Code map (read in this order)
+
+| File | What it does |
+|------|--------------|
+| `cmd/omni/main.go` | Entry point: load config, connect servers, serve |
+| `internal/omni/config.go` | `omni.json` format |
+| `internal/omni/upstream.go` | One child-process MCP connection (initialize, tools/list, tools/call) |
+| `internal/omni/catalog.go` | In-memory map of servers and tools |
+| `internal/omni/search.go` | Keyword ranking (name x3, description x2, rare words count more) |
+| `internal/omni/frontend.go` | The 4 meta-tools the agent sees |
+| `cmd/fakeserver/` | Tiny fake upstream for local testing |
+
 ## Documents
 
 | Doc | What it is |
@@ -38,9 +60,9 @@ Agent context cost stays fixed (~1–2k tokens) no matter how many tools exist b
 
 ## MVP in one paragraph
 
-Rust binary, stdio only. Connects to 2–3 stdio upstream servers from `omni.toml`, keeps
-their tools in an in-memory catalog, searches with BM25 (tantivy), validates arguments and
-forwards calls. A small benchmark measures Recall@k and token savings. Health checks,
+Go binary, stdio only. Connects to stdio upstream servers from `omni.json`, keeps
+their tools in an in-memory catalog, searches with a simple BM25-style ranker, checks
+required arguments and forwards calls. A small benchmark measures Recall@k and token savings. Health checks,
 embeddings, persistence, auth and policy come later.
 
 ## Roadmap
@@ -60,12 +82,12 @@ embeddings, persistence, auth and policy come later.
 - [x] Full system design
 - [x] MVP design
 - [ ] Design review / approval
-- [ ] MVP implementation
+- [x] MVP implementation (Go)
 - [ ] Benchmark & go/no-go decision
 
 ## Tech stack (planned)
 
-Rust · tokio · rmcp · tantivy · jsonschema · serde/toml
+Go (standard library only, no external dependencies)
 
 ## Contributing
 

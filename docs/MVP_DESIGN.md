@@ -1,6 +1,6 @@
 # Omni MCP — MVP Design (v0.1 "Does it work?")
 
-Status: design only, no code yet · Source: `Omni MCP — System Design` (full design, 14 pages)
+Status: MVP implemented in Go (see README code map). Rust in the original design was replaced by Go · Source: `Omni MCP — System Design` (full design, 14 pages)
 
 ## 1. Purpose of the MVP
 
@@ -29,12 +29,12 @@ If 1–4 hold, the idea is viable → continue the full roadmap. If recall is po
 
 ### In the MVP
 
-- Rust single binary, **stdio frontend** (works with Claude Code / Cursor).
+- Go single binary (standard library only), **stdio frontend** (works with Claude Code / Cursor).
 - The **four meta-tools**: `discover_server`, `discover_tools`, `get_tool_schema`, `invoke_tool`.
 - **Upstream manager**: connect to upstream MCP servers over **stdio** from a TOML file;
   one task per server (isolation); simple restart on crash.
 - **In-memory catalog**: on connect, `tools/list` (with pagination) → HashMap keyed by `(server, tool)`.
-- **Search: BM25 only** (`tantivy`), fields: tool name (words split), description, param names, server name/tags.
+- **Search: BM25 only** (simple in-house ranker, tantivy-style BM25 later), fields: tool name (words split), description, param names, server name/tags.
 - **Router (minimal)**: resolve → validate args against JSON schema → forward with timeout → return result.
 - Errors returned as `isError: true` tool results with a hint, never protocol errors.
 - **Mini benchmark script**: labelled queries → Recall@1/5/MRR + token count comparison.
@@ -86,7 +86,7 @@ slow or dead server cannot block the others.
 
 | Component | MVP responsibility |
 |-----------|--------------------|
-| Frontend | `rmcp` stdio server; `tools/list` always returns exactly 4 tools |
+| Frontend | hand-written JSON-RPC over stdio; `tools/list` always returns exactly 4 tools |
 | Upstream manager | Spawn child process, run `initialize`, `tools/list`, forward `tools/call`; restart with backoff on exit |
 | Catalog | `HashMap<(server, tool), ToolEntry>` + server metadata; rebuilt at startup |
 | Search | tantivy index built from the catalog at startup; rebuilt when a server (re)connects |
